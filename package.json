@@ -1,0 +1,45 @@
+{
+    "name": "ai-muliawan-final-god-version",
+    "version": "6.0.0",
+    "description": "AI-MULIAWAN FINAL GOD VERSION — Super App AI + Game + Tools — SaaS Level Production Ready",
+    "main": "server.js",
+    "scripts": {
+        "start": "node server.js",
+        "dev": "nodemon server.js",
+        "dev:watch": "nodemon --watch . --ext js,json server.js",
+        "build": "echo 'No build step required for Node.js server'",
+        "test": "node -e \"require('./server.js'); console.log('✅ Server module OK');\"",
+        "lint": "echo 'Add eslint for linting'",
+        "deploy:vps": "bash deploy.sh",
+        "docker:build": "docker build -t ai-muliawan-god .",
+        "docker:run": "docker run -p 3000:3000 --env-file .env ai-muliawan-god",
+        "docker:compose": "docker-compose up -d"
+    },
+    "keywords": [
+        "ai", "chat", "llm", "fireworks", "qwen", "gemini", "groq",
+        "game", "generator", "pwa", "super-app", "saas", "muliawan"
+    ],
+    "author": {
+        "name": "HARI MULIAWAN, S.Mat",
+        "email": "harimuliawan999@gmail.com"
+    },
+    "license": "MIT",
+    "engines": {
+        "node": ">=18.0.0",
+        "npm": ">=8.0.0"
+    },
+    "dependencies": {
+        "cors": "^2.8.5",
+        "dotenv": "^16.4.5",
+        "express": "^4.18.2",
+        "node-fetch": "^2.7.0"
+    },
+    "devDependencies": {
+        "nodemon": "^3.1.0"
+    },
+    "nodemonConfig": {
+        "watch": ["server.js", ".env"],
+        "ext": "js,json",
+        "ignore": ["node_modules/", "*.test.js"]
+    }
+}
