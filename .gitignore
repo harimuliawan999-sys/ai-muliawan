@@ -1,0 +1,23 @@
+# Sensitive — JANGAN upload ke GitHub
+.env
+.env.local
+.env.production
+
+# Dependencies
+node_modules/
+
+# Logs
+*.log
+logs/
+
+# Database lokal
+used_transactions.json
+*.db
+*.sqlite
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Deploy scripts
+deploy.sh
