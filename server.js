@@ -17,25 +17,74 @@ const crypto = require("crypto");
 const fs = require("fs");
 require("dotenv").config();
 
-// ─── TRANSACTION TRACKER — cegah screenshot dipakai ulang ────────────────────
+// ─── SQLITE DATABASE — permanen, tidak hilang saat restart ──────────────────
+const Database = require("better-sqlite3");
+const DB_PATH = path.join(__dirname, "ai_muliawan.db");
+const db = new Database(DB_PATH);
+
+// Aktifkan WAL mode untuk performa lebih baik
+db.pragma("journal_mode = WAL");
+
+// Buat tabel jika belum ada
+db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        email TEXT UNIQUE NOT NULL,
+        password TEXT NOT NULL,
+        plan TEXT DEFAULT 'free',
+        xp INTEGER DEFAULT 0,
+        level INTEGER DEFAULT 1,
+        games_generated INTEGER DEFAULT 0,
+        total_messages INTEGER DEFAULT 0,
+        total_tokens INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS premium (
+        email TEXT PRIMARY KEY,
+        plan TEXT NOT NULL,
+        expire_ts INTEGER NOT NULL,
+        activated_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS transactions (
+        ref_id TEXT PRIMARY KEY,
+        tier TEXT NOT NULL,
+        email TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS usage (
+        email TEXT NOT NULL,
+        date TEXT NOT NULL,
+        count INTEGER DEFAULT 0,
+        PRIMARY KEY (email, date)
+    );
+`);
+
+// Migrate used_transactions.json ke SQLite jika ada
 const TRX_FILE = path.join(__dirname, "used_transactions.json");
-function loadTrxDB() {
-    try { return JSON.parse(fs.readFileSync(TRX_FILE, "utf8")); } catch(e) { return {}; }
-}
-function saveTrxDB(db) {
-    try { fs.writeFileSync(TRX_FILE, JSON.stringify(db, null, 2)); } catch(e) { logger.error("[TRX] Gagal simpan:", e.message); }
-}
+try {
+    if (fs.existsSync(TRX_FILE)) {
+        const oldTrx = JSON.parse(fs.readFileSync(TRX_FILE, "utf8"));
+        const insert = db.prepare("INSERT OR IGNORE INTO transactions (ref_id, tier, created_at) VALUES (?, ?, ?)");
+        for (const [refId, data] of Object.entries(oldTrx)) {
+            insert.run(refId, data.tier || "premium", data.date || new Date().toISOString());
+        }
+        fs.renameSync(TRX_FILE, TRX_FILE + ".migrated");
+        console.log("[DB] Migrated used_transactions.json to SQLite");
+    }
+} catch(e) { console.warn("[DB] Migration skip:", e.message); }
+
+// ─── TRANSACTION TRACKER — pakai SQLite ──────────────────────────────────────
 function isTrxUsed(refId) {
     if (!refId || refId.length < 4) return false;
-    const db = loadTrxDB();
-    return !!db[refId];
+    const row = db.prepare("SELECT ref_id FROM transactions WHERE ref_id = ?").get(refId);
+    return !!row;
 }
-function markTrxUsed(refId, tier) {
+function markTrxUsed(refId, tier, email) {
     if (!refId || refId.length < 4) return;
-    const db = loadTrxDB();
-    db[refId] = { tier, date: new Date().toISOString() };
-    saveTrxDB(db);
-    logger.info(`[TRX] Saved refId=${refId} tier=${tier}`);
+    db.prepare("INSERT OR IGNORE INTO transactions (ref_id, tier, email) VALUES (?, ?, ?)").run(refId, tier, email || null);
+    console.log(`[TRX] Saved refId=${refId} tier=${tier}`);
 }
 
 const app = express();
@@ -1639,6 +1688,125 @@ app.use(express.static(path.join(__dirname, "."), {
     maxAge: process.env.NODE_ENV === "production" ? "1d" : 0,
     etag: true
 }));
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DATABASE API — Auth, Premium, Usage
+// ═══════════════════════════════════════════════════════════════════════════
+
+app.post("/api/auth/register", (req, res) => {
+    const { id, name, email, password } = req.body;
+    if (!name || !email || !password) return res.status(400).json({ error: "Semua field wajib diisi" });
+    try {
+        const existing = db.prepare("SELECT email FROM users WHERE email = ?").get(email);
+        if (existing) return res.status(409).json({ error: "Email sudah terdaftar" });
+        db.prepare("INSERT INTO users (id, name, email, password, plan) VALUES (?, ?, ?, ?, 'free')").run(id || crypto.randomUUID(), name, email, password);
+        const user = db.prepare("SELECT id, name, email, plan, xp, level, games_generated, total_messages, total_tokens FROM users WHERE email = ?").get(email);
+        res.json({ success: true, user });
+    } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post("/api/auth/login", (req, res) => {
+    const { email, password } = req.body;
+    if (!email || !password) return res.status(400).json({ error: "Email dan password wajib diisi" });
+    try {
+        const user = db.prepare("SELECT * FROM users WHERE email = ?").get(email);
+        if (!user || user.password !== password) return res.status(401).json({ error: "Email atau password salah" });
+        const prem = db.prepare("SELECT * FROM premium WHERE email = ?").get(email);
+        if (prem && prem.expire_ts > Date.now()) {
+            db.prepare("UPDATE users SET plan = ? WHERE email = ?").run(prem.plan, email);
+            user.plan = prem.plan;
+        } else if (prem && prem.expire_ts <= Date.now()) {
+            db.prepare("UPDATE users SET plan = \'free\' WHERE email = ?").run(email);
+            user.plan = "free";
+        }
+        const { password: _, ...safeUser } = user;
+        res.json({ success: true, user: safeUser, premium: prem || null });
+    } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post("/api/auth/me", (req, res) => {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: "Email required" });
+    try {
+        const user = db.prepare("SELECT id, name, email, plan, xp, level, games_generated, total_messages, total_tokens FROM users WHERE email = ?").get(email);
+        if (!user) return res.status(404).json({ error: "User not found" });
+        const prem = db.prepare("SELECT * FROM premium WHERE email = ?").get(email);
+        res.json({ success: true, user, premium: prem || null });
+    } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post("/api/auth/update", (req, res) => {
+    const { email, xp, level, total_messages, total_tokens, games_generated, name } = req.body;
+    if (!email) return res.status(400).json({ error: "Email required" });
+    try {
+        const fields = []; const vals = [];
+        if (xp !== undefined)              { fields.push("xp = ?");             vals.push(xp); }
+        if (level !== undefined)           { fields.push("level = ?");           vals.push(level); }
+        if (total_messages !== undefined)  { fields.push("total_messages = ?");  vals.push(total_messages); }
+        if (total_tokens !== undefined)    { fields.push("total_tokens = ?");    vals.push(total_tokens); }
+        if (games_generated !== undefined) { fields.push("games_generated = ?"); vals.push(games_generated); }
+        if (name !== undefined)            { fields.push("name = ?");            vals.push(name); }
+        if (fields.length === 0) return res.json({ success: true });
+        vals.push(email);
+        db.prepare(`UPDATE users SET ${fields.join(", ")}, updated_at = datetime(\'now\') WHERE email = ?`).run(...vals);
+        res.json({ success: true });
+    } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post("/api/premium/set", (req, res) => {
+    const { email, plan, expire_ts } = req.body;
+    if (!email || !plan || !expire_ts) return res.status(400).json({ error: "Missing fields" });
+    try {
+        db.prepare("INSERT OR REPLACE INTO premium (email, plan, expire_ts) VALUES (?, ?, ?)").run(email, plan, expire_ts);
+        db.prepare("UPDATE users SET plan = ? WHERE email = ?").run(plan, email);
+        res.json({ success: true });
+    } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post("/api/premium/get", (req, res) => {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: "Email required" });
+    try {
+        const prem = db.prepare("SELECT * FROM premium WHERE email = ?").get(email);
+        if (!prem || prem.expire_ts <= Date.now()) return res.json({ plan: "free", expire_ts: 0, active: false });
+        res.json({ plan: prem.plan, expire_ts: prem.expire_ts, active: true });
+    } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post("/api/usage/get", (req, res) => {
+    const { email } = req.body;
+    const today = new Date().toDateString();
+    const key = email || req.ip;
+    try {
+        const row = db.prepare("SELECT count FROM usage WHERE email = ? AND date = ?").get(key, today);
+        res.json({ count: row ? row.count : 0 });
+    } catch(e) { res.json({ count: 0 }); }
+});
+
+app.post("/api/usage/increment", (req, res) => {
+    const { email } = req.body;
+    const today = new Date().toDateString();
+    const key = email || req.ip;
+    try {
+        db.prepare("INSERT INTO usage (email, date, count) VALUES (?, ?, 1) ON CONFLICT(email, date) DO UPDATE SET count = count + 1").run(key, today);
+        const row = db.prepare("SELECT count FROM usage WHERE email = ? AND date = ?").get(key, today);
+        res.json({ count: row.count });
+    } catch(e) { res.json({ count: 0 }); }
+});
+
+app.get("/api/admin/stats", (req, res) => {
+    const { key } = req.query;
+    if (key !== (process.env.ADMIN_KEY || "admin123")) return res.status(403).json({ error: "Forbidden" });
+    try {
+        const totalUsers = db.prepare("SELECT COUNT(*) as c FROM users").get().c;
+        const premiumUsers = db.prepare("SELECT COUNT(*) as c FROM premium WHERE expire_ts > ?").get(Date.now()).c;
+        const users = db.prepare("SELECT id, name, email, plan, xp, level, total_messages, created_at FROM users ORDER BY created_at DESC LIMIT 50").all();
+        const premiums = db.prepare("SELECT email, plan, expire_ts, activated_at FROM premium WHERE expire_ts > ? ORDER BY activated_at DESC").all(Date.now());
+        const transactions = db.prepare("SELECT * FROM transactions ORDER BY created_at DESC LIMIT 50").all();
+        res.json({ totalUsers, premiumUsers, users, premiums, transactions });
+    } catch(e) { res.status(500).json({ error: e.message }); }
+});
 
 // SPA fallback
 app.get("*", (req, res) => {
