@@ -1206,7 +1206,7 @@ a{color:var(--accent-blue);text-decoration:none;}
   <div class="profile-panel">
     <div class="profile-avatar" id="profileAvatar">👤</div>
     <div class="profile-name" id="profileName">Guest User</div>
-    <div class="profile-email" id="profileEmail">harimuliawan@ai-muliawan.com</div>
+    <div class="profile-email" id="profileEmail"><a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="731b12011a1e061f1a1204121d33121a5e1e061f1a1204121d5d101c1e">[email&#160;protected]</a></div>
     <div id="profilePlanBadge" class="plan-badge plan-free" style="margin:6px auto 4px;">🆓 Free Plan</div>
     <div id="profileExpire" style="font-size:10px;color:var(--accent-gold);margin-bottom:8px;display:none;"></div>
     <div class="profile-stats">
@@ -1238,7 +1238,7 @@ a{color:var(--accent-blue);text-decoration:none;}
     <div class="ai-avatar" style="width:42px;height:42px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px;background:var(--gradient-primary);flex-shrink:0;" id="dbAvatar">👤</div>
     <div style="flex:1;min-width:0;">
       <div style="font-weight:700;font-size:13px;" id="dbName">Guest User</div>
-      <div style="font-size:10px;color:var(--text-secondary);" id="dbEmail">harimuliawan@ai-muliawan.com</div>
+      <div style="font-size:10px;color:var(--text-secondary);" id="dbEmail"><a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="ef878e9d86829a83868e988e81af8e86c2829a83868e988e81c18c8082">[email&#160;protected]</a></div>
       <div id="dbPlanBadge" class="plan-badge plan-free" style="margin-top:3px;">🆓 Free Plan</div>
     </div>
     <div style="text-align:right;flex-shrink:0;">
@@ -1432,7 +1432,7 @@ a{color:var(--accent-blue);text-decoration:none;}
 
 <!-- SCRIPTS -->
 <!-- EMERGENCY SPLASH KILLER — runs first, guarantees splash always disappears -->
-<script>
+<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
 (function() {
     function killSplash() {
         var el = document.getElementById("splashScreen");
@@ -2743,35 +2743,87 @@ const Auth = {
 
     async login(email, password) {
         if (!email || !password) { showToast("❌ Email and password required", "error"); return; }
-        const stored = JSON.parse(localStorage.getItem(`user-${email}`) || "null");
-        if (!stored || stored.password !== btoa(password)) { showToast("❌ Invalid credentials", "error"); return; }
-        engineState.user = { ...stored, password: undefined };
-        this.saveUser();
-        updateUserUI();
-        closeModal("authModal");
-        showToast(`✅ Welcome back, ${engineState.user.name}!`, "success");
+        try {
+            showToast("⏳ Logging in...", "info");
+            const res = await fetch("/api/auth/login", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ email, password: btoa(password) })
+            });
+            const data = await res.json();
+            if (!res.ok) { showToast(`❌ ${data.error}`, "error"); return; }
+            engineState.user = {
+                id: data.user.id, name: data.user.name, email: data.user.email,
+                plan: data.user.plan || "free", xp: data.user.xp || 0, level: data.user.level || 1,
+                gamesGenerated: data.user.games_generated || 0,
+                totalMessages: data.user.total_messages || 0,
+                totalTokens: data.user.total_tokens || 0
+            };
+            // Sync premium status dari server
+            if (data.premium && data.premium.expire_ts > Date.now()) {
+                localStorage.setItem("ai-god-premium", "1");
+                localStorage.setItem("ai-god-premium-expire", data.premium.expire_ts.toString());
+                localStorage.setItem("user_plan", data.premium.plan);
+            }
+            this.saveUser();
+            updateUserUI();
+            closeModal("authModal");
+            showToast(`✅ Welcome back, ${engineState.user.name}!`, "success");
+        } catch(e) {
+            // Fallback ke localStorage jika server error
+            const stored = JSON.parse(localStorage.getItem(`user-${email}`) || "null");
+            if (!stored || stored.password !== btoa(password)) { showToast("❌ Invalid credentials", "error"); return; }
+            engineState.user = { ...stored, password: undefined };
+            this.saveUser(); updateUserUI(); closeModal("authModal");
+            showToast(`✅ Welcome back (offline mode)`, "success");
+        }
     },
 
     async register(name, email, password, confirm) {
         if (!name || !email || !password) { showToast("❌ All fields required", "error"); return; }
         if (password !== confirm) { showToast("❌ Passwords do not match", "error"); return; }
         if (password.length < 6) { showToast("❌ Password too short (min 6 chars)", "error"); return; }
-        const existing = localStorage.getItem(`user-${email}`);
-        if (existing) { showToast("❌ Email already registered", "error"); return; }
-        const user = { id: generateId(), name, email, password: btoa(password), plan: "free", xp: 0, level: 1, gamesGenerated: 0, totalMessages: 0, totalTokens: 0 };
-        localStorage.setItem(`user-${email}`, JSON.stringify(user));
-        engineState.user = { ...user, password: undefined };
-        this.saveUser();
-        updateUserUI();
-        closeModal("authModal");
-        showToast(`🎉 Welcome, ${name}! Account created.`, "success");
+        try {
+            showToast("⏳ Creating account...", "info");
+            const res = await fetch("/api/auth/register", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ id: generateId(), name, email, password: btoa(password) })
+            });
+            const data = await res.json();
+            if (!res.ok) { showToast(`❌ ${data.error}`, "error"); return; }
+            engineState.user = {
+                id: data.user.id, name: data.user.name, email: data.user.email,
+                plan: "free", xp: 0, level: 1, gamesGenerated: 0, totalMessages: 0, totalTokens: 0
+            };
+            this.saveUser(); updateUserUI(); closeModal("authModal");
+            showToast(`🎉 Welcome, ${name}! Account created.`, "success");
+        } catch(e) {
+            // Fallback localStorage
+            const existing = localStorage.getItem(`user-${email}`);
+            if (existing) { showToast("❌ Email already registered", "error"); return; }
+            const user = { id: generateId(), name, email, password: btoa(password), plan: "free", xp: 0, level: 1, gamesGenerated: 0, totalMessages: 0, totalTokens: 0 };
+            localStorage.setItem(`user-${email}`, JSON.stringify(user));
+            engineState.user = { ...user, password: undefined };
+            this.saveUser(); updateUserUI(); closeModal("authModal");
+            showToast(`🎉 Welcome, ${name}! (offline mode)`, "success");
+        }
     },
 
     logout() {
+        // Sync stats ke server sebelum logout
+        const u = engineState.user;
+        if (u.email && u.email !== "guest@app.local") {
+            fetch("/api/auth/update", {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ email: u.email, xp: u.xp, level: u.level, total_messages: u.totalMessages, total_tokens: u.totalTokens, games_generated: u.gamesGenerated })
+            }).catch(() => {});
+        }
         engineState.user = { id: "guest", name: "Guest User", email: "guest@app.local", plan: "free", xp: 0, level: 1, gamesGenerated: 0, totalMessages: 0, totalTokens: 0 };
-        this.saveUser();
-        updateUserUI();
-        closeModal("profileModal");
+        localStorage.removeItem("ai-god-premium");
+        localStorage.removeItem("ai-god-premium-expire");
+        localStorage.removeItem("user_plan");
+        this.saveUser(); updateUserUI(); closeModal("profileModal");
         showToast("👋 Logged out successfully", "success");
     },
 
@@ -2781,7 +2833,29 @@ const Auth = {
 
     loadUser() {
         const saved = localStorage.getItem("ai-god-user");
-        if (saved) { try { const u = JSON.parse(saved); if (u.id) engineState.user = u; } catch(e) {} }
+        if (saved) {
+            try {
+                const u = JSON.parse(saved);
+                if (u.id) {
+                    engineState.user = u;
+                    // Sync premium dari server jika sudah login
+                    if (u.email && u.email !== "guest@app.local") {
+                        fetch("/api/premium/get", {
+                            method: "POST", headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ email: u.email })
+                        }).then(r => r.json()).then(data => {
+                            if (data.active) {
+                                engineState.user.plan = data.plan;
+                                localStorage.setItem("ai-god-premium", "1");
+                                localStorage.setItem("ai-god-premium-expire", data.expire_ts.toString());
+                                localStorage.setItem("user_plan", data.plan);
+                                updateUserUI();
+                            }
+                        }).catch(() => {});
+                    }
+                }
+            } catch(e) {}
+        }
     }
 };
 
@@ -2960,6 +3034,18 @@ const Billing = {
         localStorage.setItem("user_plan", plan);
         Auth.saveUser();
         updateUserUI();
+        // Simpan premium ke server (data tidak hilang walau ganti device)
+        const email = engineState.user.email;
+        if (email && email !== "guest@app.local") {
+            fetch("/api/premium/set", {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ email, plan, expire_ts: expireDate.getTime() })
+            }).then(() => {
+                console.log("[PREMIUM] Saved to server database");
+            }).catch(() => {
+                console.warn("[PREMIUM] Server save failed, using localStorage only");
+            });
+        }
         const expStr = expireDate.toLocaleDateString("id-ID", {day:"numeric",month:"long",year:"numeric"});
         showToast(`🎉 ${plan.toUpperCase()} aktif hingga ${expStr}!`, "success");
         closeModal("billingModal");
@@ -5808,17 +5894,4 @@ window.addEventListener("load", function() {
     // PATCH: DASHBOARD INIT SAFE — spec §6
     setTimeout(function() {
         var s = document.getElementById("splashScreen");
-        if (s && s.style.display !== "none") { s.style.display = "none"; }
-        try {
-            if (typeof window.showDashboard === "function") window.showDashboard();
-        } catch(e) {
-            console.error("INIT FAIL SAFE", e);
-            setTimeout(function(){ try { window.showDashboard && window.showDashboard(); } catch(ex){} }, 500);
-        }
-    }, 5000);
-});
-
-})(); // end IIFE
-</script>
-</body>
-</html>
+        if (s && s.style.display !== "none") { s.style.di
