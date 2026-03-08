@@ -17,15 +17,11 @@ const crypto = require("crypto");
 const fs = require("fs");
 require("dotenv").config();
 
-// ─── SQLITE DATABASE — permanen, tidak hilang saat restart ──────────────────
+// ─── SQLITE DATABASE ─────────────────────────────────────────────────────────
 const Database = require("better-sqlite3");
 const DB_PATH = path.join(__dirname, "ai_muliawan.db");
 const db = new Database(DB_PATH);
-
-// Aktifkan WAL mode untuk performa lebih baik
 db.pragma("journal_mode = WAL");
-
-// Buat tabel jika belum ada
 db.exec(`
     CREATE TABLE IF NOT EXISTS users (
         id TEXT PRIMARY KEY,
@@ -66,9 +62,9 @@ const TRX_FILE = path.join(__dirname, "used_transactions.json");
 try {
     if (fs.existsSync(TRX_FILE)) {
         const oldTrx = JSON.parse(fs.readFileSync(TRX_FILE, "utf8"));
-        const insert = db.prepare("INSERT OR IGNORE INTO transactions (ref_id, tier, created_at) VALUES (?, ?, ?)");
+        const ins = db.prepare("INSERT OR IGNORE INTO transactions (ref_id, tier, created_at) VALUES (?, ?, ?)");
         for (const [refId, data] of Object.entries(oldTrx)) {
-            insert.run(refId, data.tier || "premium", data.date || new Date().toISOString());
+            ins.run(refId, data.tier || "premium", data.date || new Date().toISOString());
         }
         fs.renameSync(TRX_FILE, TRX_FILE + ".migrated");
         console.log("[DB] Migrated used_transactions.json to SQLite");
@@ -78,13 +74,12 @@ try {
 // ─── TRANSACTION TRACKER — pakai SQLite ──────────────────────────────────────
 function isTrxUsed(refId) {
     if (!refId || refId.length < 4) return false;
-    const row = db.prepare("SELECT ref_id FROM transactions WHERE ref_id = ?").get(refId);
-    return !!row;
+    return !!db.prepare("SELECT ref_id FROM transactions WHERE ref_id = ?").get(refId);
 }
 function markTrxUsed(refId, tier, email) {
     if (!refId || refId.length < 4) return;
     db.prepare("INSERT OR IGNORE INTO transactions (ref_id, tier, email) VALUES (?, ?, ?)").run(refId, tier, email || null);
-    console.log(`[TRX] Saved refId=${refId} tier=${tier}`);
+    logger.info(`[TRX] Saved refId=${refId} tier=${tier}`);
 }
 
 const app = express();
@@ -1691,16 +1686,14 @@ app.use(express.static(path.join(__dirname, "."), {
 
 
 // ═══════════════════════════════════════════════════════════════════════════
-// DATABASE API — Auth, Premium, Usage
+// DATABASE API
 // ═══════════════════════════════════════════════════════════════════════════
-
 app.post("/api/auth/register", (req, res) => {
     const { id, name, email, password } = req.body;
     if (!name || !email || !password) return res.status(400).json({ error: "Semua field wajib diisi" });
     try {
-        const existing = db.prepare("SELECT email FROM users WHERE email = ?").get(email);
-        if (existing) return res.status(409).json({ error: "Email sudah terdaftar" });
-        db.prepare("INSERT INTO users (id, name, email, password, plan) VALUES (?, ?, ?, ?, 'free')").run(id || crypto.randomUUID(), name, email, password);
+        if (db.prepare("SELECT email FROM users WHERE email = ?").get(email)) return res.status(409).json({ error: "Email sudah terdaftar" });
+        db.prepare("INSERT INTO users (id, name, email, password) VALUES (?, ?, ?, ?)").run(id || crypto.randomUUID(), name, email, password);
         const user = db.prepare("SELECT id, name, email, plan, xp, level, games_generated, total_messages, total_tokens FROM users WHERE email = ?").get(email);
         res.json({ success: true, user });
     } catch(e) { res.status(500).json({ error: e.message }); }
@@ -1713,26 +1706,10 @@ app.post("/api/auth/login", (req, res) => {
         const user = db.prepare("SELECT * FROM users WHERE email = ?").get(email);
         if (!user || user.password !== password) return res.status(401).json({ error: "Email atau password salah" });
         const prem = db.prepare("SELECT * FROM premium WHERE email = ?").get(email);
-        if (prem && prem.expire_ts > Date.now()) {
-            db.prepare("UPDATE users SET plan = ? WHERE email = ?").run(prem.plan, email);
-            user.plan = prem.plan;
-        } else if (prem && prem.expire_ts <= Date.now()) {
-            db.prepare("UPDATE users SET plan = \'free\' WHERE email = ?").run(email);
-            user.plan = "free";
-        }
+        if (prem && prem.expire_ts > Date.now()) { user.plan = prem.plan; db.prepare("UPDATE users SET plan = ? WHERE email = ?").run(prem.plan, email); }
+        else if (prem) { user.plan = "free"; db.prepare("UPDATE users SET plan = 'free' WHERE email = ?").run(email); }
         const { password: _, ...safeUser } = user;
         res.json({ success: true, user: safeUser, premium: prem || null });
-    } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post("/api/auth/me", (req, res) => {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ error: "Email required" });
-    try {
-        const user = db.prepare("SELECT id, name, email, plan, xp, level, games_generated, total_messages, total_tokens FROM users WHERE email = ?").get(email);
-        if (!user) return res.status(404).json({ error: "User not found" });
-        const prem = db.prepare("SELECT * FROM premium WHERE email = ?").get(email);
-        res.json({ success: true, user, premium: prem || null });
     } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1740,16 +1717,14 @@ app.post("/api/auth/update", (req, res) => {
     const { email, xp, level, total_messages, total_tokens, games_generated, name } = req.body;
     if (!email) return res.status(400).json({ error: "Email required" });
     try {
-        const fields = []; const vals = [];
-        if (xp !== undefined)              { fields.push("xp = ?");             vals.push(xp); }
-        if (level !== undefined)           { fields.push("level = ?");           vals.push(level); }
-        if (total_messages !== undefined)  { fields.push("total_messages = ?");  vals.push(total_messages); }
-        if (total_tokens !== undefined)    { fields.push("total_tokens = ?");    vals.push(total_tokens); }
-        if (games_generated !== undefined) { fields.push("games_generated = ?"); vals.push(games_generated); }
-        if (name !== undefined)            { fields.push("name = ?");            vals.push(name); }
-        if (fields.length === 0) return res.json({ success: true });
-        vals.push(email);
-        db.prepare(`UPDATE users SET ${fields.join(", ")}, updated_at = datetime(\'now\') WHERE email = ?`).run(...vals);
+        const f = [], v = [];
+        if (xp !== undefined)              { f.push("xp = ?");             v.push(xp); }
+        if (level !== undefined)           { f.push("level = ?");           v.push(level); }
+        if (total_messages !== undefined)  { f.push("total_messages = ?");  v.push(total_messages); }
+        if (total_tokens !== undefined)    { f.push("total_tokens = ?");    v.push(total_tokens); }
+        if (games_generated !== undefined) { f.push("games_generated = ?"); v.push(games_generated); }
+        if (name !== undefined)            { f.push("name = ?");            v.push(name); }
+        if (f.length) { v.push(email); db.prepare(`UPDATE users SET ${f.join(", ")} WHERE email = ?`).run(...v); }
         res.json({ success: true });
     } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -1772,27 +1747,6 @@ app.post("/api/premium/get", (req, res) => {
         if (!prem || prem.expire_ts <= Date.now()) return res.json({ plan: "free", expire_ts: 0, active: false });
         res.json({ plan: prem.plan, expire_ts: prem.expire_ts, active: true });
     } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post("/api/usage/get", (req, res) => {
-    const { email } = req.body;
-    const today = new Date().toDateString();
-    const key = email || req.ip;
-    try {
-        const row = db.prepare("SELECT count FROM usage WHERE email = ? AND date = ?").get(key, today);
-        res.json({ count: row ? row.count : 0 });
-    } catch(e) { res.json({ count: 0 }); }
-});
-
-app.post("/api/usage/increment", (req, res) => {
-    const { email } = req.body;
-    const today = new Date().toDateString();
-    const key = email || req.ip;
-    try {
-        db.prepare("INSERT INTO usage (email, date, count) VALUES (?, ?, 1) ON CONFLICT(email, date) DO UPDATE SET count = count + 1").run(key, today);
-        const row = db.prepare("SELECT count FROM usage WHERE email = ? AND date = ?").get(key, today);
-        res.json({ count: row.count });
-    } catch(e) { res.json({ count: 0 }); }
 });
 
 app.get("/api/admin/stats", (req, res) => {
