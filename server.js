@@ -1030,7 +1030,7 @@ const SECRET_MODELS = [
 ];
 
 async function callHuggingFaceAPI(messages, settings) {
-    const apiKey = process.env.HUGGINGFACE_API_KEY || "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";
+    const apiKey = process.env.HUGGINGFACE_API_KEY || "";
     // HuggingFace Router — format: model:provider (featherless-ai hosts huihui abliterated models)
     const url = "https://router.huggingface.co/featherless-ai/v1/chat/completions";
 
