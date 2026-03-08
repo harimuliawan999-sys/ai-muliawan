@@ -5533,8 +5533,7 @@ function initEventListeners() {
                             role: "user",
                             content: [
                                 { type: "image", source: { type: "base64", media_type: mimeType, data: base64 } },
-                                { type: "text", text: `Analisa screenshot bukti transfer ini. Jawab HANYA dalam format JSON:
-{"valid": true/false, "reason": "alasan singkat", "nominal": angka_rupiah_atau_0, "tier": "premium"/"unlimited"/"tolak", "ref_id": "nomor referensi/order ID transaksi atau UNKNOWN"}
+                                { type: "text", text: "Analisa screenshot bukti transfer ini. Jawab HANYA dalam format JSON berikut, tidak boleh ada teks lain:\n{\"valid\": true/false, \"reason\": \"alasan singkat\", \"nominal\": angka_rupiah_atau_0, \"tier\": \"premium\"/\"unlimited\"/\"tolak\", \"ref_id\": \"nomor referensi transaksi yang tertera di screenshot, atau UNKNOWN jika tidak ada\"}\n\nRULES:\n- valid=true HANYA jika: (1) status Berhasil/Sukses/Success, (2) penerima mengandung HA atau AN atau nomor berakhir 07 atau 05 atau 7107 atau 2505, (3) nominal >= 9900\n- JANGAN pernah tolak berdasarkan tanggal\n- WAJIB isi ref_id dengan nomor referensi/order/transaksi yang ada di screenshot" }
 
 RULES:
 - valid=true HANYA jika: (1) status "Berhasil/Sukses/Success", (2) penerima mengandung "HA" atau "AN" atau nomor berakhir "07" atau "05" atau "7107" atau "2505", (3) nominal >= 9900
