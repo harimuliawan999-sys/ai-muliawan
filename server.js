@@ -1356,13 +1356,13 @@ app.post("/api/verify-payment", antiSpam, async (req, res) => {
             res.json({ result: '{"valid":false,"reason":"Sistem verifikasi sedang sibuk, coba lagi atau hubungi developer via WhatsApp","nominal":0,"tier":"tolak","ref_id":"UNKNOWN"}' });
             return;
         }
-
+		
         // Cek nomor referensi duplikat
+        const imgHash = crypto.createHash('md5').update(imgContent.source.data).digest('hex');
         const refMatch = result.match(/"ref_id"\s*:\s*"([^"]+)"/i);
-        const refId = refMatch ? refMatch[1].trim() : "UNKNOWN";
+        const refId = (refMatch && refMatch[1].trim() !== 'UNKNOWN') ? refMatch[1].trim() : imgHash;
         const isValidResult = /"valid"\s*:\s*true/i.test(result);
-
-        if (isValidResult && refId !== "UNKNOWN") {
+        if (isValidResult) {
             if (isTrxUsed(refId)) {
                 logger.warn(`[VERIFY-PAYMENT] ❌ Duplikat refId=${refId}`);
                 res.json({ result: '{"valid":false,"reason":"⚠️ Transaksi ini sudah pernah digunakan untuk mengaktifkan paket. Setiap bukti transfer hanya dapat digunakan satu kali. Hubungi developer jika ada pertanyaan.","nominal":0,"tier":"tolak"}' });
@@ -1371,9 +1371,8 @@ app.post("/api/verify-payment", antiSpam, async (req, res) => {
             const tierMatch = result.match(/"tier"\s*:\s*"([^"]+)"/i);
             const tier = tierMatch ? tierMatch[1] : "premium";
             markTrxUsed(refId, tier);
-            logger.info(`[VERIFY-PAYMENT] ✅ New transaction saved refId=${refId}`);
+            logger.info(`[VERIFY-PAYMENT] ✅ New transaction saved refId=${refId} (hash=${imgHash})`);
         }
-
         res.json({ result });
     } catch(e) {
         logger.error("[VERIFY-PAYMENT] error:", e.message);
