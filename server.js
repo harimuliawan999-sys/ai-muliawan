@@ -1316,8 +1316,11 @@ app.post("/api/verify-payment", antiSpam, async (req, res) => {
         let result = null;
 
         // Prompt tambahan: ekstrak nomor referensi transaksi
-        const promptText = textContent.text + '\n- Tambahkan field "ref_id" berisi nomor referensi/order ID transaksi di screenshot (nomor panjang di bagian referensi/order/ID). Kalau tidak ada tulis "UNKNOWN".';
-
+        const promptText = textContent.text.replace(
+    '{"valid": true/false, "reason": "alasan singkat", "nominal": angka_rupiah_atau_0, "tier": "premium"/"unlimited"/"tolak", "ref_id": "nomor referensi/order ID transaksi atau UNKNOWN"}',
+    '{"valid": true/false, "reason": "alasan singkat", "nominal": angka_rupiah_atau_0, "tier": "premium"/"unlimited"/"tolak", "ref_id": "nomor referensi/order ID transaksi atau UNKNOWN"}'
+) + "\nPENTING: Sertakan field ref_id berisi nomor referensi/order/transaction ID yang tertera di screenshot. Jika tidak ada, isi UNKNOWN.";
+		
         for (const pool of pools) {
             const keys = KEY_POOLS[pool];
             if (!keys || keys.length === 0) continue;
