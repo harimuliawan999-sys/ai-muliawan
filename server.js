@@ -896,9 +896,24 @@ async function callGroqWithKey(key, messages, settings, model) {
         throw new Error(`Groq HTTP ${res.status}: ${errTxt.slice(0, 200)}`);
     }
     const data = await res.json();
-    const text = data.choices?.[0]?.message?.content;
-    if (!text?.trim()) throw new Error("Groq empty response");
-    return text;
+let text = data.choices?.[0]?.message?.content;
+
+if (!text?.trim()) throw new Error("Groq empty response");
+
+// 🔥 HAPUS THINK BLOCK
+text = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+
+// 🔥 HAPUS PEMBUKA ENGLISH
+text = text
+    .replace(/^(Sure|Here|Okay|Alright)[^a-zA-Z0-9]*/i, "")
+    .trim();
+
+// 🔥 DETEKSI KASAR ENGLISH → PAKSA INDONESIA
+if (/^\s*(this|the|in|on|you|we|it|is|are)\b/i.test(text)) {
+    text = "Berikut penjelasannya:\n\n" + text;
+}
+
+return text;
 }
 
 // backward compat
